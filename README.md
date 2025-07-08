@@ -1,1 +1,1 @@
-# mindtrack-journal
+# MindTrack Journal App
