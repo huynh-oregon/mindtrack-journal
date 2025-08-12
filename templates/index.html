@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MindTrack – Journal</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { --bg:#0b0b0c; --card:#141418; --muted:#a9abb3; --border:#2a2b31; --txt:#f3f4f6; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color: var(--txt); background: linear-gradient(180deg, #0b0b0c, #141418 40%, #0b0b0c); }
+    header { padding: 24px; border-bottom: 1px solid var(--border); }
+    header h1 { margin: 0; font-size: 22px; letter-spacing: .2px; }
+    main { padding: 24px; display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    h2 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+    label { font-size: 12px; color: var(--muted); }
+    textarea, input, button { font: inherit; }
+    textarea { width: 100%; min-height: 120px; color: var(--txt); background: #0f1014; border: 1px solid var(--border); border-radius: 10px; padding: 12px; resize: vertical; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .pill { display: inline-flex; gap: 6px; align-items: center; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: #0f1014; }
+    input[type="text"], input[type="date"], input[type="time"] { flex: 1; min-width: 120px; background: #0f1014; border: 1px solid var(--border); border-radius: 10px; padding: 10px; color: var(--txt); }
+    button { padding: 10px 14px; border-radius: 10px; background: #1f6feb; border: 1px solid #2b75f4; color: white; cursor: pointer; }
+    button.secondary { background: #0f1014; border: 1px solid var(--border); color: var(--txt); }
+    .stack { display: grid; gap: 10px; }
+    .footer-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .list { display: grid; gap: 8px; max-height: 420px; overflow: auto; }
+    .item { border: 1px solid var(--border); border-radius: 10px; padding: 10px; display:flex; justify-content: space-between; gap:10px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header><h1>MindTrack – Journal</h1></header>
+
+  <main>
+    
+    <section class="card">
+      <h2 id="formTitle">Write a New Entry</h2>
+      <div class="stack">
+        <div class="row">
+          <label class="pill">Date <input id="date" type="date"></label>
+          <label class="pill">Time <input id="time" type="time"></label>
+          <span class="pill"><span class="muted">Word Count:</span> <strong id="wc">0</strong></span>
+        </div>
+
+        <label for="entry">Text (optional)</label>
+        <textarea id="entry" placeholder="Write your thoughts..."></textarea>
+
+        <div class="row">
+          <button class="secondary" id="getEncBtn">Get Encouragement</button>
+          <span id="encText" class="pill" style="min-height:32px;"></span>
+        </div>
+
+        <div class="row" id="createButtons">
+          <button id="saveBtn">Save Entry</button>
+          <button class="secondary" id="saveEncOnlyBtn">Save Encouragement Only</button>
+          <span id="saveMsg" class="footer-note"></span>
+        </div>
+
+        <div class="row" id="editButtons" style="display:none">
+          <button id="updateBtn">Save Changes</button>
+          <button class="secondary" id="cancelEditBtn">Cancel</button>
+          <span id="editMsg" class="footer-note"></span>
+        </div>
+
+        <div class="footer-note">
+          You can save with text, encouragement, or both. Date & time can be set for new entries and edits.
+        </div>
+      </div>
+    </section>
+
+    
+    <section class="card">
+      <h2>My Journal Entries</h2>
+      <div class="stack">
+        <div class="row">
+          <button class="secondary" id="refreshCountBtn">Refresh Count</button>
+          <span class="pill"><span class="muted">Count:</span> <strong id="count">0</strong></span>
+          <span class="pill"><span class="muted">Date:</span> <strong id="countDate">—</strong></span>
+
+          <button class="secondary" id="refreshListBtn">Refresh List</button>
+
+          <!-- NEW: Microservice D export CSV -->
+          <button id="exportCsvBtn">Export CSV</button>
+          <span id="csvMsg" class="footer-note"></span>
+        </div>
+
+        <div id="list" class="list"></div>
+        <div class="footer-note">Click “Edit” to modify, or “Delete” to remove an entry. Click "CSV Export" to download all entries to your local computer.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let editingId = null;
+
+    function setFormMode(mode) {
+      if (mode === 'create') {
+        editingId = null;
+        $('formTitle').textContent = 'Write a New Entry';
+        $('createButtons').style.display = '';
+        $('editButtons').style.display = 'none';
+        $('saveMsg').textContent = '';
+        $('editMsg').textContent = '';
+      } else {
+        $('formTitle').textContent = 'Edit Entry';
+        $('createButtons').style.display = 'none';
+        $('editButtons').style.display = '';
+        $('saveMsg').textContent = '';
+        $('editMsg').textContent = '';
+      }
+    }
+
+    async function GET(path) {
+      const res = await fetch(path);
+      const t = await res.text();
+      try { return JSON.parse(t); } catch { return { ok:false, raw:t, status:res.status }; }
+    }
+    async function POST(path, payload) {
+      const res = await fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload || {}) });
+      const t = await res.text();
+      try { return JSON.parse(t); } catch { return { ok:false, raw:t, status:res.status }; }
+    }
+
+    // Fill date & time defaults
+    function setNow() {
+      const now = new Date();
+      $('date').value = now.toISOString().slice(0,10);
+      const hh = String(now.getHours()).padStart(2,'0');
+      const mm = String(now.getMinutes()).padStart(2,'0');
+      $('time').value = `${hh}:${mm}`;
+    }
+
+    // Word count (A)
+    let wcTimer = null;
+    $('entry').addEventListener('input', () => {
+      clearTimeout(wcTimer);
+      wcTimer = setTimeout(async () => {
+        const text = $('entry').value || '';
+        if (!text.trim()) { $('wc').textContent = '0'; return; }
+        const out = await POST('/api/a/wordcount', { text });
+        $('wc').textContent = out && out.count != null ? out.count : '0';
+      }, 250);
+    });
+
+    // Encouragement (B)
+    $('getEncBtn').addEventListener('click', async () => {
+      const out = await GET('/api/b/random');
+      $('encText').textContent = out && out.encouragement ? out.encouragement : '…';
+    });
+
+    async function doSave(text, encouragement) {
+      const payload = {
+        text: text || '',
+        encouragement: encouragement || '',
+        date: $('date').value || '',
+        time: $('time').value || ''
+      };
+      const res = await POST('/api/entries/create', payload);
+      if (res && res.ok) {
+        $('saveMsg').textContent = `Saved ✔ (${res.id})`;
+        $('entry').value = '';
+        $('encText').textContent = '';
+        $('wc').textContent = '0';
+        setNow();
+        await refreshCount();
+        await refreshList();
+      } else {
+        $('saveMsg').textContent = res && res.error ? res.error : 'Save failed.';
+      }
+    }
+
+    $('saveBtn').addEventListener('click', async () => {
+      const text = ($('entry').value || '').trim();
+      const enc = ($('encText').textContent || '').trim();
+      $('saveMsg').textContent = '';
+      if (!text && !enc) {
+        $('saveMsg').textContent = 'Enter text or click “Get Encouragement”.';
+        return;
+      }
+      await doSave(text, enc);
+    });
+
+    $('saveEncOnlyBtn').addEventListener('click', async () => {
+      const enc = ($('encText').textContent || '').trim();
+      $('saveMsg').textContent = '';
+      if (!enc) {
+        $('saveMsg').textContent = 'Click “Get Encouragement” first.';
+        return;
+      }
+      await doSave('', enc);
+    });
+
+    // List, Edit, Delete
+    async function refreshList() {
+      const out = await GET('/api/entries/list');
+      const list = $('list');
+      list.innerHTML = '';
+      (out.items || []).forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'item';
+        div.innerHTML = `
+          <div>
+            <div><strong>${item.date || '—'} ${item.time || ''}</strong></div>
+            <div class="muted mono">${(item.preview || '').replace(/</g,'&lt;')}</div>
+          </div>
+          <div class="row">
+            <button class="secondary" data-edit="${item.id}">Edit</button>
+            <button class="secondary" data-del="${item.id}">Delete</button>
+          </div>
+        `;
+        div.querySelector('button[data-edit]').addEventListener('click', () => startEdit(item.id));
+        div.querySelector('button[data-del]').addEventListener('click', () => onDelete(item.id));
+        list.appendChild(div);
+      });
+    }
+
+    async function startEdit(id) {
+      const res = await GET('/api/entries/get?id=' + encodeURIComponent(id));
+      if (!res || res.ok === false) return;
+      const e = res.entry || {};
+      editingId = e.id;
+      $('entry').value = e.text || '';
+      $('encText').textContent = e.encouragement || '';
+      $('date').value = e.date || '';
+      $('time').value = e.time || '';
+      $('wc').textContent = '0';
+      setFormMode('edit');
+    }
+
+    $('updateBtn').addEventListener('click', async () => {
+      if (!editingId) return;
+      const payload = {
+        id: editingId,
+        text: ($('entry').value || '').trim(),
+        encouragement: ($('encText').textContent || '').trim(),
+        date: $('date').value || '',
+        time: $('time').value || ''
+      };
+      const res = await POST('/api/entries/update', payload);
+      if (res && res.ok) {
+        $('editMsg').textContent = 'Updated ✔';
+        setFormMode('create');
+        $('entry').value = '';
+        $('encText').textContent = '';
+        $('wc').textContent = '0';
+        setNow();
+        await refreshList();
+      } else {
+        $('editMsg').textContent = res && res.error ? res.error : 'Update failed.';
+      }
+    });
+
+    $('cancelEditBtn').addEventListener('click', () => {
+      setFormMode('create');
+      $('entry').value = '';
+      $('encText').textContent = '';
+      $('wc').textContent = '0';
+      setNow();
+    });
+
+    async function onDelete(id) {
+      if (!id) return;
+      const ok = confirm('Delete this entry? This cannot be undone.');
+      if (!ok) return;
+
+      const res = await POST('/api/entries/delete', { id });
+      if (res && res.ok) {
+        if (editingId === id) {
+          setFormMode('create');
+          $('entry').value = '';
+          $('encText').textContent = '';
+          $('wc').textContent = '0';
+        }
+        await refreshList();
+        await refreshCount();
+      } else {
+        alert(res && res.error ? `Delete failed: ${res.error}` : 'Delete failed.');
+      }
+    }
+
+    // Count (C)
+    async function refreshCount() {
+      const out = await GET('/api/c/count-with-date');
+      if (out) {
+        $('count').textContent = out.count ?? 0;
+        $('countDate').textContent = out.date || '—';
+      }
+    }
+    $('refreshCountBtn').addEventListener('click', refreshCount);
+    $('refreshListBtn').addEventListener('click', refreshList);
+
+    // Export CSV (D)
+    $('exportCsvBtn').addEventListener('click', async () => {
+      $('csvMsg').textContent = 'Working…';
+      const out = await POST('/api/d/export-csv', {});
+      if (out && out.path) {
+        const file = out.path.split('/').pop();
+        $('csvMsg').innerHTML = `CSV ready: <a href="/exports/${file}" target="_blank">${file}</a>`;
+      } else if (out && out.note === 'no entries') {
+        $('csvMsg').textContent = 'No entries to export.';
+      } else {
+        $('csvMsg').textContent = 'Export failed.';
+      }
+    });
+
+    // init
+    setNow();
+    refreshCount();
+    refreshList();
+    setFormMode('create');
+  </script>
+</body>
+</html>
